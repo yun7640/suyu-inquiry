@@ -24,10 +24,25 @@ console.log('[Mail config] enabled:', mailEnabled, mailEnabled ? `| to: ${MAIL_T
 
 const transporter = mailEnabled
   ? nodemailer.createTransport({
-      service: 'gmail',
+      // 포트 587(STARTTLS) 사용 — 클라우드 환경에서 465보다 연결이 안정적
+      host: 'smtp.gmail.com',
+      port: 587,
+      secure: false,              // 587은 STARTTLS로 업그레이드
+      requireTLS: true,
       auth: { user: MAIL_USER, pass: MAIL_PASS },
+      connectionTimeout: 20000,   // 연결 대기 20초
+      greetingTimeout: 20000,
+      socketTimeout: 25000,
+      tls: { servername: 'smtp.gmail.com' },
     })
   : null;
+
+// 서버 시작 시 SMTP 연결 확인 (문제를 배포 직후 바로 알 수 있도록)
+if (transporter) {
+  transporter.verify()
+    .then(() => console.log('[Mail] SMTP 연결 확인 완료 (smtp.gmail.com:587)'))
+    .catch(err => console.error('[Mail] SMTP 연결 실패:', err.code || '', err.message));
+}
 
 // 문의 내용을 메일로 발송 (실패해도 문의 저장에는 영향 없음)
 async function sendInquiryMail({ name, phone, email, floor, biz, message }) {
@@ -137,7 +152,7 @@ app.post('/api/inquiries', async (req, res) => {
     // 이메일 알림 발송 — 실패해도 이미 저장은 완료된 상태
     sendInquiryMail({ name, phone, email, floor, biz, message })
       .then(() => { if (mailEnabled) console.log('[Mail] 발송 완료:', name); })
-      .catch(err => console.error('[Mail] 발송 실패:', err.message));
+      .catch(err => console.error('[Mail] 발송 실패:', err.code || '', err.message, err.command || ''));
     return;
   } catch (e) {
     console.error(e);
