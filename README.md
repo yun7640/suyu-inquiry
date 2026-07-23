@@ -32,18 +32,36 @@ inquiry-app/
 4. **환경변수 설정** (Node 서비스 → Variables)
    - `DATABASE_URL` = `${{Postgres.DATABASE_URL}}`
    - `ADMIN_PASSWORD` = 관리자 비밀번호
-   - `MAIL_USER` = 발송용 Gmail 주소
-   - `MAIL_PASS` = 해당 Gmail 앱 비밀번호 16자리
-   - `MAIL_TO` = 받을 주소들, 쉼표 구분 (임대인,중개사)
+   **이메일 알림을 쓰려면 아래 2개도 추가** (선택 · 미설정 시 저장만 동작):
+   - `RESEND_API_KEY` = Resend에서 발급한 API 키 (`re_`로 시작)
+   - `MAIL_TO` = 받을 주소들, 쉼표로 구분 (예: 임대인@gmail.com,중개사@naver.com)
+   - (선택) `MAIL_FROM` = 발신 주소. 도메인 인증 전에는 생략하면 `onboarding@resend.dev` 사용
+
 5. **Settings → Networking → Generate Domain** → 새 문의용 링크 생성
 6. 재배포 후 Deploy Logs에 `DB ready` / `[Mail config] enabled: true` 확인
 
-## Gmail 앱 비밀번호 발급
+## Resend 설정 (이메일 발송)
 
-1. 발송용 Gmail 계정 준비 (임대 전용 계정 권장)
-2. 구글 계정 → 보안 → **2단계 인증** 활성화
-3. 같은 화면에서 **앱 비밀번호** 생성 → 16자리 복사 (한 번만 표시)
-4. Railway `MAIL_PASS`에 입력
+Railway는 Hobby 플랜에서 SMTP(포트 25/465/587)를 차단하므로, HTTPS API 방식인 **Resend**를 사용합니다.
+무료 티어로 월 3,000건까지 발송할 수 있어 임대 문의 용도로는 충분합니다.
+
+1. **resend.com** 접속 → 무료 가입
+2. 좌측 메뉴 **API Keys** → **Create API Key**
+   - 이름 아무거나 (예: `suyu-inquiry`), 권한은 **Sending access**
+   - 생성된 키(`re_...`)를 복사 — 한 번만 표시되므로 반드시 기록
+3. Railway Variables에 `RESEND_API_KEY` = 복사한 키, `MAIL_TO` = 받을 주소들 입력
+4. 재배포 후 Deploy Logs에 `[Mail config] enabled: true` 확인
+5. 문의를 제출해 메일 수신 확인 (스팸함도 함께 확인)
+
+### 수신 주소 제한 관련
+
+Resend는 도메인 인증 전에는 발신 주소로 `onboarding@resend.dev`만 쓸 수 있고,
+**Resend 가입 시 사용한 이메일 주소로만 발송**되는 제한이 있습니다.
+
+- 여러 명(임대인·중개사)에게 보내려면 **본인 도메인을 Resend에 등록·인증**하면 됩니다
+  (Resend → Domains → Add Domain → DNS 레코드 등록)
+- 도메인이 없다면: `MAIL_TO`에 **Resend 가입 이메일 하나만** 넣고,
+  해당 메일함(Gmail 등)에서 **자동 전달 규칙**을 만들어 중개사에게 포워딩하는 방법이 간단합니다
 
 ## 참고
 

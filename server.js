@@ -1,7 +1,6 @@
 const express = require('express');
 const path = require('path');
 const { Pool } = require('pg');
-const nodemailer = require('nodemailer');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -9,44 +8,26 @@ const PORT = process.env.PORT || 3000;
 // 관리자 비밀번호: Railway 환경변수 ADMIN_PASSWORD로 설정. 미설정 시 기본값(반드시 변경 권장)
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'change-me';
 
-// ── 이메일 알림 설정 ──────────────────────────────────────────
+// ── 이메일 알림 설정 (Resend HTTPS API) ──────────────────────
+// Railway는 Hobby 플랜에서 SMTP(25/465/587)를 차단하므로, HTTPS(443) 기반
+// Resend API를 사용합니다. 추가 패키지 없이 Node 18+ 내장 fetch로 호출합니다.
+//
 // Railway 환경변수:
-//   MAIL_USER : 발송용 Gmail 주소 (예: suyu.lease@gmail.com)
-//   MAIL_PASS : 해당 Gmail의 "앱 비밀번호" 16자리 (구글계정→보안→2단계인증→앱비밀번호)
-//   MAIL_TO   : 받을 주소들, 쉼표로 구분 (예: 임대인@gmail.com,중개사@naver.com)
-// 세 개가 모두 설정된 경우에만 메일이 발송되며, 미설정 시 저장만 정상 동작합니다.
-const MAIL_USER = process.env.MAIL_USER;
-const MAIL_PASS = process.env.MAIL_PASS;
+//   RESEND_API_KEY : Resend 대시보드에서 발급한 API 키 (re_ 로 시작)
+//   MAIL_FROM      : 발신 주소. 도메인 인증 전에는 'onboarding@resend.dev' 사용
+//   MAIL_TO        : 받을 주소들, 쉼표로 구분 (예: 임대인@gmail.com,중개사@naver.com)
+// RESEND_API_KEY와 MAIL_TO가 있으면 발송되며, 미설정 시 저장만 정상 동작합니다.
+const RESEND_API_KEY = process.env.RESEND_API_KEY;
+const MAIL_FROM = process.env.MAIL_FROM || 'onboarding@resend.dev';
 const MAIL_TO = process.env.MAIL_TO;
-const mailEnabled = !!(MAIL_USER && MAIL_PASS && MAIL_TO);
+const mailEnabled = !!(RESEND_API_KEY && MAIL_TO);
 
-console.log('[Mail config] enabled:', mailEnabled, mailEnabled ? `| to: ${MAIL_TO}` : '| MAIL_USER/MAIL_PASS/MAIL_TO 미설정');
-
-const transporter = mailEnabled
-  ? nodemailer.createTransport({
-      // 포트 587(STARTTLS) 사용 — 클라우드 환경에서 465보다 연결이 안정적
-      host: 'smtp.gmail.com',
-      port: 587,
-      secure: false,              // 587은 STARTTLS로 업그레이드
-      requireTLS: true,
-      auth: { user: MAIL_USER, pass: MAIL_PASS },
-      connectionTimeout: 20000,   // 연결 대기 20초
-      greetingTimeout: 20000,
-      socketTimeout: 25000,
-      tls: { servername: 'smtp.gmail.com' },
-    })
-  : null;
-
-// 서버 시작 시 SMTP 연결 확인 (문제를 배포 직후 바로 알 수 있도록)
-if (transporter) {
-  transporter.verify()
-    .then(() => console.log('[Mail] SMTP 연결 확인 완료 (smtp.gmail.com:587)'))
-    .catch(err => console.error('[Mail] SMTP 연결 실패:', err.code || '', err.message));
-}
+console.log('[Mail config] enabled:', mailEnabled,
+  mailEnabled ? `| from: ${MAIL_FROM} | to: ${MAIL_TO}` : '| RESEND_API_KEY/MAIL_TO 미설정');
 
 // 문의 내용을 메일로 발송 (실패해도 문의 저장에는 영향 없음)
 async function sendInquiryMail({ name, phone, email, floor, biz, message }) {
-  if (!transporter) return;
+  if (!mailEnabled) return;
   const when = new Date().toLocaleString('ko-KR', { timeZone: 'Asia/Seoul' });
   const esc = (s) => String(s || '').replace(/[&<>]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]));
   const html = `
@@ -69,13 +50,28 @@ async function sendInquiryMail({ name, phone, email, floor, biz, message }) {
       </p>
     </div>`;
 
-  await transporter.sendMail({
-    from: `"수유역 상가 임대" <${MAIL_USER}>`,
-    to: MAIL_TO,                       // 쉼표로 구분된 여러 수신자 지원
-    replyTo: email || undefined,       // 답장 시 문의자에게 바로 회신
+  // Resend API 호출 (HTTPS 443 — Railway에서 차단되지 않음)
+  const payload = {
+    from: `수유역 상가 임대 <${MAIL_FROM}>`,
+    to: MAIL_TO.split(',').map(s => s.trim()).filter(Boolean),  // 여러 수신자 지원
     subject: `[임대문의] ${name} · ${floor || '층 미지정'}${biz ? ' · ' + biz : ''}`,
     html,
+  };
+  if (email) payload.reply_to = email;   // 답장 시 문의자에게 바로 회신
+
+  const res = await fetch('https://api.resend.com/emails', {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${RESEND_API_KEY}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(payload),
   });
+
+  if (!res.ok) {
+    const detail = await res.text();
+    throw new Error(`Resend ${res.status}: ${detail}`);
+  }
 }
 
 // DB 연결 설정
