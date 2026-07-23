@@ -197,6 +197,26 @@ app.post('/api/admin/memo', async (req, res) => {
   }
 });
 
+// 문의 삭제 (비밀번호 필요) — 단건 또는 여러 건 일괄 삭제
+app.post('/api/admin/delete', async (req, res) => {
+  const { password, ids } = req.body;
+  if (password !== ADMIN_PASSWORD) {
+    return res.status(401).json({ ok: false, error: '비밀번호가 올바르지 않습니다.' });
+  }
+  const list = Array.isArray(ids) ? ids : (ids ? [ids] : []);
+  const nums = list.map(Number).filter(n => Number.isInteger(n) && n > 0);
+  if (!nums.length) {
+    return res.status(400).json({ ok: false, error: '삭제할 문의를 선택해 주세요.' });
+  }
+  try {
+    const result = await pool.query('DELETE FROM inquiries WHERE id = ANY($1::int[])', [nums]);
+    res.json({ ok: true, deleted: result.rowCount });
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ ok: false, error: '삭제 중 오류가 발생했습니다.' });
+  }
+});
+
 // 관리자 페이지
 app.get('/admin', (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'admin.html'));

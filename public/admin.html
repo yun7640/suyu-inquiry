@@ -52,6 +52,17 @@
   .memo-msg{font-size:12.5px;font-weight:600;margin-left:10px}
   .memo-msg.ok{color:var(--brand)}
   .memo-msg.err{color:var(--accent)}
+  .del{background:#fff;color:#a3392a;border:1px solid #f2c9c2;border-radius:9px;padding:8px 14px;font-family:inherit;font-size:13px;font-weight:600;cursor:pointer}
+  .del:hover{background:#fdecea}
+  .selbox{width:17px;height:17px;accent-color:var(--brand);cursor:pointer;margin-right:2px}
+  .bulk{display:flex;align-items:center;gap:10px;background:var(--panel);border:1px solid var(--line);border-radius:11px;padding:10px 14px;margin-bottom:12px;font-size:13.5px}
+  .bulk label{display:flex;align-items:center;gap:7px;font-weight:600;cursor:pointer}
+  .bulk .cnt{color:var(--mut)}
+  .bulkdel{margin-left:auto;background:#a3392a;color:#fff;border:0;border-radius:9px;padding:8px 15px;font-family:inherit;font-size:13px;font-weight:700;cursor:pointer}
+  .bulkdel:disabled{opacity:.45;cursor:default}
+  .remember{display:flex;align-items:center;gap:7px;margin-top:12px;font-size:13px;color:var(--mut);cursor:pointer}
+  .remember input{accent-color:var(--brand);cursor:pointer}
+  .logout{background:transparent;border:1px solid var(--line);color:var(--mut);border-radius:9px;padding:9px 14px;font-family:inherit;font-size:13px;font-weight:600;cursor:pointer}
   .hidden{display:none}
 </style>
 </head>
@@ -64,6 +75,7 @@
     <label for="pw">관리자 비밀번호</label>
     <input type="password" id="pw" placeholder="비밀번호를 입력하세요" autocomplete="current-password">
     <button id="loginBtn">확인</button>
+    <label class="remember"><input type="checkbox" id="rememberPw"> 이 브라우저에 비밀번호 저장</label>
     <div class="err" id="gateErr">비밀번호가 올바르지 않습니다.</div>
   </div>
 
@@ -71,6 +83,12 @@
     <div class="bar">
       <span class="count" id="count">0건</span>
       <button class="refresh" id="refreshBtn">새로고침</button>
+      <button class="logout" id="logoutBtn">로그아웃</button>
+    </div>
+    <div class="bulk" id="bulkBar">
+      <label><input type="checkbox" class="selbox" id="selAll"> 전체 선택</label>
+      <span class="cnt" id="selCnt">0건 선택됨</span>
+      <button class="bulkdel" id="bulkDelBtn" disabled>선택 삭제</button>
     </div>
     <div id="list"></div>
   </div>
@@ -119,6 +137,7 @@
         : '';
       return `<div class="card">
         <div class="chead">
+          <input type="checkbox" class="selbox rowsel" data-id="${it.id}">
           <span class="cname">${esc(it.name)}</span>
           ${it.floor?`<span class="cfloor">${esc(it.floor)}</span>`:''}
           <span class="badge ${statusClass}">${esc(status)}</span>
@@ -129,6 +148,7 @@
         <div class="cactions">
           ${replyBtn}
           <a class="reply call" href="tel:${esc(it.phone)}">📞 전화 걸기</a>
+          <button class="del" data-id="${it.id}" data-name="${escAttr(it.name)}">🗑 삭제</button>
         </div>
         <div class="memo-wrap">
           <div class="memo-row">
@@ -165,24 +185,114 @@
         setTimeout(()=>{msg.textContent='';},3000);
       });
     });
+
+    // 개별 삭제
+    list.querySelectorAll('.del').forEach(btn=>{
+      btn.addEventListener('click', async ()=>{
+        const id=btn.getAttribute('data-id');
+        const nm=btn.getAttribute('data-name')||'';
+        if(!confirm(`"${nm}" 문의를 삭제할까요?\n삭제하면 복구할 수 없습니다.`)) return;
+        await doDelete([Number(id)]);
+      });
+    });
+
+    // 행 선택 변경
+    list.querySelectorAll('.rowsel').forEach(cb=>{
+      cb.addEventListener('change', updateSel);
+    });
+    updateSel();
   }
 
-  async function doLogin(){
-    const pw=pwInput.value.trim();
-    if(!pw) return;
+  // 선택 상태 갱신
+  function updateSel(){
+    const boxes=[...document.querySelectorAll('.rowsel')];
+    const checked=boxes.filter(b=>b.checked);
+    document.getElementById('selCnt').textContent=checked.length+'건 선택됨';
+    document.getElementById('bulkDelBtn').disabled=checked.length===0;
+    const all=document.getElementById('selAll');
+    all.checked = boxes.length>0 && checked.length===boxes.length;
+    all.indeterminate = checked.length>0 && checked.length<boxes.length;
+  }
+
+  // 삭제 실행
+  async function doDelete(ids){
+    try{
+      const r=await fetch('/api/admin/delete',{
+        method:'POST',headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({password:cachedPw, ids})
+      });
+      const j=await r.json();
+      if(j.ok){
+        const res=await load(cachedPw);
+        if(res&&res.ok) render(res.items);
+      }else{
+        alert('삭제 실패: '+(j.error||''));
+      }
+    }catch(e){ alert('네트워크 오류로 삭제하지 못했습니다.'); }
+  }
+
+  const PW_KEY='suyu_admin_pw';
+
+  async function doLogin(pwArg, silent){
+    const pw = pwArg !== undefined ? pwArg : pwInput.value.trim();
+    if(!pw) return false;
     const res=await load(pw);
     if(res && res.ok){
       cachedPw=pw;
+      // 저장 체크 시 브라우저에 보관 (자동 로그인용)
+      const remember=document.getElementById('rememberPw');
+      if(pwArg===undefined && remember && remember.checked){
+        try{ localStorage.setItem(PW_KEY, pw); }catch(e){}
+      }
       gate.classList.add('hidden');
       panel.classList.remove('hidden');
       render(res.items);
+      return true;
     }else{
-      gateErr.style.display='block';
+      if(!silent) gateErr.style.display='block';
+      // 저장된 비번이 틀리면 폐기
+      try{ localStorage.removeItem(PW_KEY); }catch(e){}
+      return false;
     }
   }
 
-  document.getElementById('loginBtn').addEventListener('click',doLogin);
+  // 저장된 비밀번호가 있으면 자동 로그인
+  (async ()=>{
+    try{
+      const saved=localStorage.getItem(PW_KEY);
+      if(saved){
+        const rem=document.getElementById('rememberPw');
+        if(rem) rem.checked=true;
+        await doLogin(saved, true);
+      }
+    }catch(e){}
+  })();
+
+  document.getElementById('loginBtn').addEventListener('click',()=>doLogin());
   pwInput.addEventListener('keydown',e=>{if(e.key==='Enter')doLogin();});
+
+  // 전체 선택
+  document.getElementById('selAll').addEventListener('change',(e)=>{
+    document.querySelectorAll('.rowsel').forEach(cb=>{cb.checked=e.target.checked;});
+    updateSel();
+  });
+
+  // 선택 삭제
+  document.getElementById('bulkDelBtn').addEventListener('click', async ()=>{
+    const ids=[...document.querySelectorAll('.rowsel')].filter(b=>b.checked).map(b=>Number(b.getAttribute('data-id')));
+    if(!ids.length) return;
+    if(!confirm(`선택한 ${ids.length}건을 삭제할까요?\n삭제하면 복구할 수 없습니다.`)) return;
+    await doDelete(ids);
+  });
+
+  // 로그아웃 (저장된 비밀번호 삭제)
+  document.getElementById('logoutBtn').addEventListener('click',()=>{
+    try{ localStorage.removeItem(PW_KEY); }catch(e){}
+    cachedPw='';
+    pwInput.value='';
+    panel.classList.add('hidden');
+    gate.classList.remove('hidden');
+  });
   document.getElementById('refreshBtn').addEventListener('click',async()=>{
     const res=await load(cachedPw); if(res&&res.ok) render(res.items);
   });
